@@ -1,13 +1,8 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Mic, Square, Loader2 } from 'lucide-react'
-import { clsx, type ClassValue } from 'clsx'
-import { twMerge } from 'tailwind-merge'
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
+import { cn } from '@/lib/utils'
 
 interface RecorderControlsProps {
   onTranscription: (text: string) => void
@@ -35,15 +30,19 @@ export function RecorderControls({ onTranscription, onError }: RecorderControlsP
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await headTranscription(audioBlob)
+        try {
+          const wavBlob = await convertWebMToWav(audioBlob)
+          await headTranscription(wavBlob)
+        } catch (err) {
+          await headTranscription(audioBlob)
+        }
         stream.getTracks().forEach(track => track.stop())
       }
 
       mediaRecorder.start()
       setIsRecording(true)
     } catch (err) {
-      console.error('Error accessing microphone:', err)
-      onError('Microphone access denied or not available.')
+      onError('Microphone access denied.')
     }
   }
 
@@ -57,7 +56,7 @@ export function RecorderControls({ onTranscription, onError }: RecorderControlsP
   const headTranscription = async (blob: Blob) => {
     setIsUploading(true)
     const formData = new FormData()
-    formData.append('audio', blob, 'recording.webm')
+    formData.append('audio', blob, 'recording.wav')
 
     try {
       const response = await fetch('/api/transcribe', {
@@ -79,42 +78,51 @@ export function RecorderControls({ onTranscription, onError }: RecorderControlsP
   }
 
   return (
-    <div className="flex items-center gap-4">
-      {isRecording ? (
-        <button
-          onClick={stopRecording}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-white transition-all hover:bg-red-50 hover:scale-105 active:scale-95 shadow-lg shadow-red-900/20"
-        >
-          <Square className="h-5 w-5 fill-current" />
-        </button>
+    <button
+      onClick={isRecording ? stopRecording : startRecording}
+      disabled={isUploading}
+      className={cn(
+        "w-9 h-9 rounded-full flex items-center justify-center transition-all",
+        isRecording 
+          ? "bg-[rgba(248,113,113,0.15)] text-[var(--mic-active)] mic-recording" 
+          : "text-[var(--mic-idle)] hover:bg-[var(--accent-subtle)] hover:scale-[1.05]"
+      )}
+    >
+      {isUploading ? (
+        <Loader2 className="w-4 h-4 animate-spin text-[var(--text-faint)]" />
+      ) : isRecording ? (
+        <Square className="w-4 h-4 fill-current" />
       ) : (
-        <button
-          onClick={startRecording}
-          disabled={isUploading}
-          className={cn(
-            "flex h-12 w-12 items-center justify-center rounded-full transition-all shadow-lg",
-            isUploading 
-              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" 
-              : "bg-indigo-600 text-white hover:bg-indigo-500 hover:scale-105 active:scale-95 shadow-indigo-900/20"
-          )}
-        >
-          {isUploading ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Mic className="h-5 w-5" />
-          )}
-        </button>
+        <Mic className="w-4 h-4" />
       )}
-      
-      {isRecording && (
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-          </span>
-          <span className="text-sm font-medium text-red-500 animate-pulse">Recording...</span>
-        </div>
-      )}
-    </div>
+    </button>
   )
+}
+
+async function convertWebMToWav(webmBlob: Blob): Promise<Blob> {
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+  const arrayBuffer = await webmBlob.arrayBuffer()
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+  const numOfChan = audioBuffer.numberOfChannels
+  const length = audioBuffer.length * numOfChan * 2 + 44
+  const bufferArray = new ArrayBuffer(length)
+  const view = new DataView(bufferArray)
+  const channels = []
+  let sample = 0; let offset = 0; let pos = 0
+  function setUint16(data: number) { view.setUint16(pos, data, true); pos += 2 }
+  function setUint32(data: number) { view.setUint32(pos, data, true); pos += 4 }
+  setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157)
+  setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan)
+  setUint32(audioBuffer.sampleRate); setUint32(audioBuffer.sampleRate * 2 * numOfChan)
+  setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164); setUint32(length - pos - 4)
+  for (let i = 0; i < audioBuffer.numberOfChannels; i++) { channels.push(audioBuffer.getChannelData(i)) }
+  while (pos < length) {
+    for (let i = 0; i < numOfChan; i++) {
+       sample = Math.max(-1, Math.min(1, channels[i][offset])) 
+       sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0 
+       view.setInt16(pos, sample, true); pos += 2
+    }
+    offset++
+  }
+  return new Blob([bufferArray], { type: 'audio/wav' })
 }

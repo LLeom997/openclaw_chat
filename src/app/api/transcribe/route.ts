@@ -1,67 +1,73 @@
-import { createClient } from '@/lib/supabase/server'
-import { openai } from '@/lib/openai/client'
 import { NextResponse } from 'next/server'
+
+const WORKER_URL = "https://openclaw-trans.maitreyanarendra1997.workers.dev";
 
 export async function POST(request: Request) {
   try {
+    console.log('[1/5] Received transcription request');
+    
     const formData = await request.formData()
     const audioFile = formData.get('audio') as File
     
     if (!audioFile) {
+      console.log('[-] Error: No audio file provided in request');
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 })
     }
 
-    // Convert file to base64
-    const arrayBuffer = await audioFile.arrayBuffer()
-    const base64Audio = Buffer.from(arrayBuffer).toString('base64')
-
-    // Call OpenRouter with input_audio
-    const response = await openai.chat.completions.create({
-      model: 'openai/gpt-4o-mini',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Transcribe this audio exactly as spoken.' },
-            {
-              type: 'input_audio',
-              input_audio: {
-                data: base64Audio,
-                format: audioFile.type.includes('wav') ? 'wav' : 'mp3',
-              },
-            },
-          ],
-        },
-      ],
-    })
-
-    const transcript = response.choices[0]?.message?.content || ''
-
-    if (!transcript) {
-      return NextResponse.json({ error: 'Transcription failed' }, { status: 500 })
+    if (audioFile.size === 0) {
+      console.log('[-] Error: Audio file is empty');
+      return NextResponse.json({ error: 'Audio file is empty' }, { status: 400 })
     }
 
-    // Optional: Save to Supabase (Skipping user authentication for now)
-    // You might need to update your RLS policies to allow anonymous inserts
-    const supabase = await createClient()
-    const { error: dbError } = await supabase
-      .from('messages')
-      .insert([
-        {
-          content: transcript,
-          role: 'user',
-          // user_id is skipped because auth is disabled for now
-        }
-      ])
+    console.log(`[2/5] Extracted audio file: size=${audioFile.size} bytes, type=${audioFile.type}`);
 
-    if (dbError) {
-      console.error('Database error:', dbError)
+    // Convert file to base64
+    const arrayBuffer = await audioFile.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer as ArrayBuffer)
+    const base64Audio = buffer.toString('base64')
+    
+    console.log(`[3/5] Converted audio to base64 string (Length: ${base64Audio.length})`);
+
+    // Determine format to send (assume wav or mp3 for the worker based on typical browser types)
+    const formatToSend = audioFile.type.includes('mp3') ? 'mp3' : 'wav'
+
+    console.log(`[4/5] Sending payload to OpenClaw Worker Agent: ${WORKER_URL} with format: ${formatToSend}`);
+    
+    // Call the external worker
+    const workerResponse = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        audio: base64Audio,
+        format: formatToSend 
+      })
+    });
+
+    if (!workerResponse.ok) {
+      const errorText = await workerResponse.text();
+      console.error(`[-] Worker returned error status ${workerResponse.status}:`, errorText);
+      return NextResponse.json({ error: `Worker API Error: ${workerResponse.status}` }, { status: workerResponse.status })
+    }
+
+    const data = await workerResponse.json()
+    console.log(`[5/5] Received successful response from Worker`);
+
+    // Assuming the worker returns a JSON object like { transcript: "..." } or similar
+    // Adjust this fallback depending on the exact worker response schema
+    const transcript = data.transcript || data.text || data.result || '';
+
+    if (!transcript) {
+      console.warn('[-] Warning: Worker returned empty transcript');
+    } else {
+      console.log('[-] SUCCESS: Transcript extracted ->', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
     }
 
     return NextResponse.json({ transcript })
 
   } catch (error: any) {
-    console.error('Transcription route error:', error)
+    console.error('[-] Transcription route caught exception:', error)
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 })
   }
 }

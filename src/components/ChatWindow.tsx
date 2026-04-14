@@ -1,165 +1,98 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { Sidebar } from './Sidebar'
+import { Topbar } from './Topbar'
+import { ChatInput } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
-import { RecorderControls } from './RecorderControls'
-import { createClient } from '@/lib/supabase/client'
-import { LogOut, User as UserIcon } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface Message {
-  id?: string
   role: 'user' | 'assistant'
   content: string
-  created_at?: string
 }
 
 export function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [userEmail, setUserEmail] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const supabase = createClient()
-  const router = useRouter()
 
   useEffect(() => {
-    fetchMessages()
-    getUser()
-  }, [])
-
-  useEffect(() => {
-    scrollToBottom()
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const getUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) setUserEmail(user.email ?? 'Anonymous')
-  }
-
-  const fetchMessages = async () => {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .order('created_at', { ascending: true })
-
-    if (error) {
-      console.error('Error fetching messages:', error)
-    } else if (data) {
-      setMessages(data)
-    }
-  }
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  const handleTranscription = (transcript: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: transcript }])
-    sendToOpenClaw(transcript)
-  }
-
-  const sendToOpenClaw = (transcript: string) => {
-    // Placeholder function for future OpenClaw integration
-    console.log('Sending to OpenClaw:', transcript)
+  const handleSendMessage = (text: string) => {
+    const newMessage: Message = { role: 'user', content: text }
+    setMessages(prev => [...prev, newMessage])
     
-    // Simulate assistant response
+    // Simple mock response logic (to be replaced by real agent logic)
     setTimeout(() => {
-      const response = "I've received your transcription. This is a placeholder for the OpenClaw integration response."
-      setMessages(prev => [...prev, { role: 'assistant', content: response }])
-      
-      // We don't save assistant response to DB yet in this minimal version, 
-      // but we could if needed.
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: 'Response will come from OpenClaw here. This is where your AI model reply will appear — rich, contextual, and voice-enabled.' 
+      }])
     }, 1000)
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.refresh()
+  const handleTranscription = (transcript: string) => {
+    // Logic for partial transcription or intermediate state can go here
+    setError(null)
   }
 
   return (
-    <div className="flex h-screen w-full flex-col bg-zinc-950 font-sans text-zinc-100">
-      {/* Navbar */}
-      <header className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-6 py-4 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
-            <span className="text-lg font-bold">O</span>
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">OpenClaw Chat</h1>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-            <UserIcon className="h-4 w-4" />
-            <span>{userEmail}</span>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-zinc-700"
-          >
-            <LogOut className="h-4 w-4" />
-            <span>Logout</span>
-          </button>
-        </div>
-      </header>
+    <div className="flex h-screen w-full bg-[var(--bg)] text-[var(--text)] overflow-hidden font-sans">
+      <Sidebar />
+      
+      <main className="flex-1 flex flex-col min-w-0 h-screen relative">
+        <Topbar />
 
-      {/* Messages Area */}
-      <main className="flex-1 overflow-y-auto px-6 py-8">
-        <div className="mx-auto max-w-3xl space-y-2">
-          {messages.length === 0 && (
-            <div className="flex h-[40vh] flex-col items-center justify-center space-y-4 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-900 border border-zinc-800">
-                <Mic className="h-8 w-8 text-indigo-500" />
+        <ScrollArea className="flex-1">
+          <div className="max-w-[720px] mx-auto px-6 py-10 flex flex-col gap-6">
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center text-center pt-[clamp(2.5rem,10vh,6rem)]">
+                <div className="w-16 h-16 rounded-[var(--radius-xl)] bg-[var(--surface-2)] border border-[var(--border)] flex items-center justify-center text-[var(--accent)] mb-5 shadow-[var(--shadow-sm)]">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 17l9 5 9-5"/><path d="M3 12l9 5 9-5"/>
+                  </svg>
+                </div>
+                <h2 className="text-[var(--text-lg)] font-semibold tracking-tight mb-2">What can I help with?</h2>
+                <p className="text-[var(--text-sm)] text-[var(--text-muted)] max-w-[36ch]">Speak or type — voice transcribes instantly.</p>
+                
+                <div className="flex flex-wrap gap-2 justify-center max-w-[560px] mt-8">
+                  {['Explain thermal runaway causes', 'Help with DFMEA table format', 'Summarize drop test standards'].map(chip => (
+                    <button 
+                      key={chip} 
+                      onClick={() => handleSendMessage(chip)}
+                      className="px-4 py-2 rounded-full border border-[var(--border)] text-[var(--text-xs)] text-[var(--text-muted)] bg-[var(--surface)] hover:bg-[var(--surface-2)] hover:border-[var(--accent-subtle)] hover:text-[var(--text)] transition-all"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div>
-                <h2 className="text-xl font-semibold">Start a conversation</h2>
-                <p className="max-w-xs text-zinc-400">Tap the microphone below and speak to transcribe your voice.</p>
-              </div>
-            </div>
-          )}
-          {messages.map((msg, index) => (
-            <MessageBubble key={index} message={msg} />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-      </main>
-
-      {/* Input Area */}
-      <footer className="border-t border-zinc-800 bg-zinc-900/50 px-6 py-6 backdrop-blur-md">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
-          <div className="flex-1">
-            {error && (
-              <p className="mb-2 text-sm text-red-500">{error}</p>
+            ) : (
+              messages.map((msg, index) => (
+                <div key={index} className="group">
+                  <MessageBubble message={msg} />
+                </div>
+              ))
             )}
-            <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 min-h-[56px] flex items-center text-zinc-400 italic">
-              Transcription will appear here after recording...
-            </div>
+            <div ref={messagesEndRef} />
           </div>
-          <RecorderControls 
-            onTranscription={handleTranscription} 
-            onError={setError} 
-          />
-        </div>
-      </footer>
-    </div>
-  )
-}
+        </ScrollArea>
 
-function Mic({ className }: { className?: string }) {
-  return (
-    <svg 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" 
-      height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>
-    </svg>
+        <ChatInput 
+          onSendMessage={handleSendMessage} 
+          onTranscription={handleTranscription} 
+          onError={setError} 
+        />
+
+        {error && (
+          <div className="absolute bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-full text-[var(--text-xs)] text-red-500 animate-in fade-in slide-in-from-bottom-2">
+            {error}
+          </div>
+        )}
+      </main>
+    </div>
   )
 }
