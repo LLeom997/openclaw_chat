@@ -1,73 +1,92 @@
 import { NextResponse } from 'next/server'
 
-const WORKER_URL = "https://openclaw-trans.maitreyanarendra1997.workers.dev";
-
 export async function POST(request: Request) {
+  const logs: string[] = [];
+
+  const log = (msg: string) => {
+    const line = `[${new Date().toISOString()}] ${msg}`;
+    console.log(line);
+    logs.push(line);
+  };
+
   try {
-    console.log('[1/5] Received transcription request');
-    
+    log("Stage 1: request received");
+
     const formData = await request.formData()
     const audioFile = formData.get('audio') as File
-    
-    if (!audioFile) {
-      console.log('[-] Error: No audio file provided in request');
-      return NextResponse.json({ error: 'No audio file provided' }, { status: 400 })
-    }
 
-    if (audioFile.size === 0) {
-      console.log('[-] Error: Audio file is empty');
-      return NextResponse.json({ error: 'Audio file is empty' }, { status: 400 })
-    }
+    if (!audioFile) throw new Error("No audio file provided");
 
-    console.log(`[2/5] Extracted audio file: size=${audioFile.size} bytes, type=${audioFile.type}`);
+    const arrayBuffer = await audioFile.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Audio = buffer.toString('base64');
 
-    // Convert file to base64
-    const arrayBuffer = await audioFile.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer as ArrayBuffer)
-    const base64Audio = buffer.toString('base64')
-    
-    console.log(`[3/5] Converted audio to base64 string (Length: ${base64Audio.length})`);
+    log(`Stage 2: audio length (base64) = ${base64Audio.length}`);
+    log(`Stage 2b: raw buffer length = ${buffer.length}`);
 
-    // Determine format to send (assume wav or mp3 for the worker based on typical browser types)
-    const formatToSend = audioFile.type.includes('mp3') ? 'mp3' : 'wav'
+    const header = buffer.slice(0, 4).toString('ascii');
+    log(`Stage 4: header = ${header}`);
 
-    console.log(`[4/5] Sending payload to OpenClaw Worker Agent: ${WORKER_URL} with format: ${formatToSend}`);
-    
-    // Call the external worker
-    const workerResponse = await fetch(WORKER_URL, {
+    const payload = {
+      model: "openai/gpt-audio-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Transcribe. If no speech say NO_SPEECH"
+            },
+            {
+              type: "input_audio",
+              input_audio: {
+                data: base64Audio,
+                format: audioFile.type.includes('mp3') ? 'mp3' : 'wav'
+              }
+            }
+          ]
+        }
+      ],
+      temperature: 0
+    };
+
+    log("Stage 5: sending to OpenRouter");
+
+    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        audio: base64Audio,
-        format: formatToSend 
-      })
+      body: JSON.stringify(payload)
     });
 
-    if (!workerResponse.ok) {
-      const errorText = await workerResponse.text();
-      console.error(`[-] Worker returned error status ${workerResponse.status}:`, errorText);
-      return NextResponse.json({ error: `Worker API Error: ${workerResponse.status}` }, { status: workerResponse.status })
+    const text = await resp.text();
+    log(`Stage 6: raw response = ${text.slice(0, 200)}`);
+
+    if (!resp.ok) {
+      throw new Error(`OpenRouter Error: ${resp.status} - ${text}`);
     }
 
-    const data = await workerResponse.json()
-    console.log(`[5/5] Received successful response from Worker`);
+    const data = JSON.parse(text);
+    const content = data.choices?.[0]?.message?.content;
 
-    // Assuming the worker returns a JSON object like { transcript: "..." } or similar
-    // Adjust this fallback depending on the exact worker response schema
-    const transcript = data.transcript || data.text || data.result || '';
-
-    if (!transcript) {
-      console.warn('[-] Warning: Worker returned empty transcript');
+    let transcript = "";
+    if (Array.isArray(content)) {
+      transcript = content.map((p: any) => p.text || "").join("").trim();
     } else {
-      console.log('[-] SUCCESS: Transcript extracted ->', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
+      transcript = content || "";
     }
 
-    return NextResponse.json({ transcript })
+    log(`Stage 7: transcript = ${transcript}`);
 
-  } catch (error: any) {
-    console.error('[-] Transcription route caught exception:', error)
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 })
+    return NextResponse.json({
+      transcript,
+      logs
+    });
+
+  } catch (e: any) {
+    log(`ERROR: ${e.message}`);
+    return NextResponse.json({ error: e.message, logs }, { status: 500 });
   }
 }
